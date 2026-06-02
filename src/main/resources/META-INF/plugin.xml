@@ -7,7 +7,7 @@
     <description><![CDATA[
         <p><b>MybatisLogFormatSQL</b> formats MyBatis log output into executable SQL.</p>
         <p>Select MyBatis log text in any editor, right-click, and choose
-        <b>MyBatis Log → Format SQL</b> to see the SQL with all <code>?</code>
+        <b>MybatisLogFormatSQL</b> to see the SQL with all <code>?</code>
         placeholders replaced by their typed, SQL-safe literal values.</p>
     ]]></description>
 
