@@ -1,5 +1,5 @@
 <!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
-<idea-plugin>
+<idea-plugin require-restart="true">
     <id>com.aladinsws.plugins</id>
     <name>MybatisLogFormatSQL</name>
     <vendor url="https://github.com/aladinsws">aladinsws</vendor>
@@ -11,9 +11,9 @@
         placeholders replaced by their typed, SQL-safe literal values.</p>
     ]]></description>
 
-    <idea-version since-build="261" until-build="261.*"/>
+    <idea-version since-build="251" until-build="261.*"/>
 
-    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.idea</depends>
 
     <actions>
         <action id="MybatisLogFormatSQL.FormatSQL"
@@ -21,6 +21,7 @@
                 text="MybatisLogFormatSQL"
                 description="Parse MyBatis log and format the SQL with parameters filled in">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ConsoleEditorPopupMenu" anchor="last"/>
         </action>
     </actions>
 </idea-plugin>
