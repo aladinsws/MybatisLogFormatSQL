@@ -2,27 +2,11 @@ package com.aladinsws.plugins;
 
 import org.junit.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
-/**
- * Unit tests for {@link MybatisLogParser}.
- *
- * <p>Covers:
- * <ul>
- *   <li>Basic SQL + parameters parsing</li>
- *   <li>All supported SQL literal type mappings</li>
- *   <li>NULL handling (typed and bare)</li>
- *   <li>Single-quote escaping inside string values</li>
- *   <li>Arrow-prefixed log format (==&gt; Preparing: …)</li>
- *   <li>Case-insensitive keywords</li>
- *   <li>More placeholders than parameters (remaining ? kept)</li>
- *   <li>No parameters line / empty parameters</li>
- *   <li>Missing Preparing line (error message)</li>
- *   <li>Windows (CRLF) line endings</li>
- *   <li>Extra surrounding log lines are ignored</li>
- *   <li>Boolean → 1 / 0 conversion</li>
- * </ul>
- */
 public class MybatisLogParserTest {
 
     // -----------------------------------------------------------------------
@@ -198,15 +182,17 @@ public class MybatisLogParserTest {
 
     @Test
     public void testArrowPrefixedFormat() {
-        String input = "==> Preparing: SELECT id FROM user WHERE id = ?\n" +
-                       "==> Parameters: 7(Integer)";
+        String input = """
+                ==> Preparing: SELECT id FROM user WHERE id = ?
+                ==> Parameters: 7(Integer)""";
         assertEquals("SELECT id FROM user WHERE id = 7", MybatisLogParser.parse(input));
     }
 
     @Test
     public void testMultipleEqualsArrowFormat() {
-        String input = "===> Preparing: SELECT id FROM t WHERE code = ?\n" +
-                       "===> Parameters: ABC(String)";
+        String input = """
+                ===> Preparing: SELECT id FROM t WHERE code = ?
+                ===> Parameters: ABC(String)""";
         assertEquals("SELECT id FROM t WHERE code = 'ABC'", MybatisLogParser.parse(input));
     }
 
@@ -216,13 +202,17 @@ public class MybatisLogParserTest {
 
     @Test
     public void testUpperCaseKeywords() {
-        String input = "PREPARING: SELECT 1 FROM dual WHERE x = ?\nPARAMETERS: 5(Integer)";
+        String input = """
+                PREPARING: SELECT 1 FROM dual WHERE x = ?
+                PARAMETERS: 5(Integer)""";
         assertEquals("SELECT 1 FROM dual WHERE x = 5", MybatisLogParser.parse(input));
     }
 
     @Test
     public void testMixedCaseKeywords() {
-        String input = "Preparing: SELECT 1 WHERE a = ?\nparameters: z(String)";
+        String input = """
+                Preparing: SELECT 1 WHERE a = ?
+                parameters: z(String)""";
         assertEquals("SELECT 1 WHERE a = 'z'", MybatisLogParser.parse(input));
     }
 
@@ -264,7 +254,9 @@ public class MybatisLogParserTest {
 
     @Test
     public void testWindowsLineEndings() {
-        String input = "Preparing: SELECT * FROM t WHERE id = ?\r\nParameters: 42(Integer)";
+        String input = """
+                Preparing: SELECT * FROM t WHERE id = ?\r
+                Parameters: 42(Integer)""";
         assertEquals("SELECT * FROM t WHERE id = 42", MybatisLogParser.parse(input));
     }
 
@@ -291,6 +283,59 @@ public class MybatisLogParserTest {
         );
     }
 
+    // -----------------------------------------------------------------------
+    // Long log sample console output
+    // -----------------------------------------------------------------------
+
+    @Test
+    public void testLogLongMybatisSample() {
+        String preparing = """
+                SELECT o.id, o.order_no, o.status, o.total_amount, o.discount, o.is_deleted, \
+                o.created_at, o.updated_at, c.id AS customer_id, c.name AS customer_name, \
+                c.email, c.phone, c.vip_level, p.id AS product_id, p.name AS product_name, \
+                p.sku, p.unit_price, p.stock_qty, od.quantity, od.unit_price AS ordered_price, \
+                od.subtotal, s.id AS shipper_id, s.company_name, s.tracking_no, s.shipped_at, \
+                s.estimated_delivery \
+                FROM orders o \
+                LEFT JOIN customers c ON c.id = o.customer_id \
+                LEFT JOIN order_details od ON od.order_id = o.id \
+                LEFT JOIN products p ON p.id = od.product_id \
+                LEFT JOIN shippers s ON s.order_id = o.id \
+                WHERE o.status = ? AND o.is_deleted = ? AND o.total_amount >= ? \
+                AND o.discount <= ? AND o.created_at BETWEEN ? AND ? \
+                AND c.vip_level IN (?, ?, ?) AND c.email LIKE ? AND p.sku = ? \
+                AND p.stock_qty > ? AND od.quantity BETWEEN ? AND ? \
+                AND s.shipped_at IS NOT NULL AND o.id != ? \
+                ORDER BY o.created_at DESC LIMIT ? OFFSET ?""";
+
+        String parameters = """
+                ACTIVE(String), false(Boolean), 99.99(BigDecimal), 0.5(Double), \
+                2024-01-01 00:00:00(String), 2024-12-31 23:59:59(String), \
+                1(Integer), 2(Integer), 3(Integer), %john%(String), SKU-20240315(String), \
+                0(Long), 1(Integer), 100(Integer), 9999(Long), 20(Integer), 0(Integer)""";
+
+        String rawLog =
+                "2024-03-15 10:23:45.123 DEBUG 12345 --- [main] c.e.mapper.OrderMapper.findOrders        : ==> " +
+                        "Preparing: " + preparing + "\n" +
+                        "2024-03-15 10:23:45.124 DEBUG 12345 --- [main] c.e.mapper.OrderMapper.findOrders        : " +
+                        "==> Parameters: " + parameters + "\n" +
+                        "2024-03-15 10:23:45.456 DEBUG 12345 --- [main] c.e.mapper.OrderMapper.findOrders        : " +
+                        "<==      Total: 5";
+
+        System.out.println("=== Raw MyBatis Log ===");
+        for (String line : rawLog.split("\n")) {
+            System.out.println(line);
+        }
+
+        String result = MybatisLogParser.parse(rawLog);
+
+        System.out.println("\n=== Formatted SQL ===");
+        System.out.println(result);
+
+        assertNotNull(result);
+        assertFalse("Should not return an error", result.startsWith("Error:"));
+    }
+
     @Test
     public void testPrimitiveLowercaseTypes() {
         // Primitive int / long / short / double / float / boolean
@@ -299,6 +344,68 @@ public class MybatisLogParserTest {
                 "1(int), 2(long), 3(short), 1.1(double), 2.2(float), true(boolean)"
         );
         assertEquals("SELECT 1 , 2, 3, 1.1, 2.2, 1", MybatisLogParser.parse(input));
+    }
+
+    @Test
+    public void testComplexPostgresqlCTEWithWindowFunctions() {
+        String preparing = """
+                WITH ranked_orders AS \
+                (SELECT o.order_id, o.customer_id, o.order_date, o.total_amount, c.customer_name, c.country, \
+                ROW_NUMBER() OVER (PARTITION BY o.customer_id ORDER BY o.order_date DESC) as order_rank, \
+                DENSE_RANK() OVER (PARTITION BY c.country ORDER BY o.total_amount DESC) as country_rank \
+                FROM orders o JOIN customers c ON o.customer_id = c.customer_id \
+                WHERE o.order_date >= CURRENT_DATE - INTERVAL '? years'), \
+                customer_stats AS \
+                (SELECT customer_id, COUNT(*) as total_orders, SUM(total_amount) as lifetime_value, \
+                AVG(total_amount) as avg_order_value, MAX(order_date) as last_order_date FROM ranked_orders GROUP BY customer_id), \
+                filtered_results AS \
+                (SELECT ro.*, cs.total_orders, cs.lifetime_value, cs.avg_order_value, \
+                CASE WHEN cs.lifetime_value > ? THEN ? WHEN cs.lifetime_value > ? THEN ? ELSE ? END as customer_tier, \
+                LAG(ro.total_amount) OVER (PARTITION BY ro.customer_id ORDER BY ro.order_date) as previous_order_amount, \
+                LEAD(ro.total_amount) OVER (PARTITION BY ro.customer_id ORDER BY ro.order_date) as next_order_amount \
+                FROM ranked_orders ro JOIN customer_stats cs ON ro.customer_id = cs.customer_id WHERE ro.order_rank <= ?) \
+                SELECT customer_id, customer_name, country, total_orders, lifetime_value, \
+                ROUND(avg_order_value, ?) as avg_order_value, customer_tier, order_id, order_date, total_amount, \
+                previous_order_amount, next_order_amount, \
+                ROUND(((total_amount - COALESCE(previous_order_amount, total_amount)) / \
+                COALESCE(previous_order_amount, total_amount) * ?)::numeric, ?) as order_growth_percent \
+                FROM filtered_results WHERE lifetime_value > ? ORDER BY country, lifetime_value DESC, order_date DESC \
+                LIMIT ? OFFSET ?""";
+
+        String parameters = """
+                2(Integer), 50000(BigDecimal), VIP(String), 10000(BigDecimal), Premium(String), Standard(String), \
+                5(Integer), 2(Integer), 100(Double), 2(Integer), 5000(BigDecimal), 20(Integer), 0(Integer)""";
+
+        String rawLog =
+                "2024-03-15 14:32:18.567 DEBUG 54321 --- [scheduler] c.e.mapper.CustomerMapper.analyzeOrders       : " +
+                        "==> Preparing: " + preparing + "\n" +
+                        "2024-03-15 14:32:18.568 DEBUG 54321 --- [scheduler] c.e.mapper.CustomerMapper.analyzeOrders " +
+                        "      : ==> Parameters: " + parameters + "\n" +
+                        "2024-03-15 14:32:18.893 DEBUG 54321 --- [scheduler] c.e.mapper.CustomerMapper.analyzeOrders " +
+                        "      : <==    Columns: customer_id, customer_name, country, total_orders, lifetime_value, " +
+                        "avg_order_value, customer_tier, order_id, order_date, total_amount, previous_order_amount, " +
+                        "next_order_amount, order_growth_percent\n" +
+                        "2024-03-15 14:32:18.894 DEBUG 54321 --- [scheduler] c.e.mapper.CustomerMapper.analyzeOrders " +
+                        "      : <==        Row: 1, Jane Smith, USA, 12, 125000.00, 10416.67, VIP, 1005, 2024-03-15, " +
+                        "15000.00, 14500.00, null\n" +
+                        "2024-03-15 14:32:18.895 DEBUG 54321 --- [scheduler] c.e.mapper.CustomerMapper.analyzeOrders " +
+                        "      : <==      Total: 1";
+
+        System.out.println("=== Complex PostgreSQL CTE Log ===");
+        for (String line : rawLog.split("\n")) {
+            System.out.println(line);
+        }
+
+        String result = MybatisLogParser.parse(rawLog);
+
+        System.out.println("\n=== Formatted SQL ===");
+        System.out.println(result);
+
+        assertNotNull(result);
+        assertFalse("Should not return an error", result.startsWith("Error:"));
+        assertTrue("Should contain WITH clause", result.contains("WITH"));
+        assertTrue("Should contain window functions", result.contains("ROW_NUMBER()"));
+        assertTrue("Should contain CASE statement", result.contains("CASE"));
     }
 }
 

@@ -8,11 +8,6 @@ import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * Pure utility class that parses MyBatis log output and produces
- * an executable SQL string with all {@code ?} placeholders filled in.
- * No IntelliJ runtime dependency — fully unit-testable standalone.
- */
 public final class MybatisLogParser {
 
     private static final String ERROR_NO_PREPARING =
@@ -148,9 +143,7 @@ public final class MybatisLogParser {
             return "NULL";
         }
 
-        // Java 21 switch expression with multi-label case arms
         return switch (type) {
-            // Numeric types — emit unquoted
             case "Integer", "int",
                  "Long", "long",
                  "Short", "short",
@@ -158,11 +151,9 @@ public final class MybatisLogParser {
                  "Float", "float",
                  "BigDecimal", "BigInteger" -> value;
 
-            // Boolean — true → 1, false → 0
             case "Boolean", "boolean" ->
                     "true".equalsIgnoreCase(value) ? "1" : "0";
 
-            // Everything else (String, Date, LocalDate, LocalDateTime, …) — quoted
             default -> "'" + value.replace("'", "''") + "'";
         };
     }
@@ -181,5 +172,4 @@ public final class MybatisLogParser {
         return result.toString();
     }
 }
-
 

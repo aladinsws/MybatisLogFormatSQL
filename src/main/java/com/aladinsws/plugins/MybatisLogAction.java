@@ -34,7 +34,8 @@ public class MybatisLogAction extends AnAction {
         var selectedText = editor.getSelectionModel().getSelectedText();
         if (selectedText == null || selectedText.isBlank()) return;
 
-        var formattedSql = MybatisLogParser.parse(selectedText);
+        var rawSql = MybatisLogParser.parse(selectedText);
+        var formattedSql = rawSql.startsWith("Error:") ? rawSql : SqlFormatter.format(rawSql);
         new MybatisLogDialog(e.getProject(), formattedSql).show();
     }
 }
