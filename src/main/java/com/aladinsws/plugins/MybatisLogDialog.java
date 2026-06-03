@@ -34,14 +34,13 @@ public class MybatisLogDialog extends DialogWrapper {
     @Nullable
     protected JComponent createCenterPanel() {
         var panel = new JPanel(new BorderLayout(0, 8));
-        panel.setPreferredSize(new Dimension(700, 300));
+        panel.setPreferredSize(new Dimension(800, 500));
 
         panel.add(new JLabel("Executable SQL:"), BorderLayout.NORTH);
 
         textArea = new JBTextArea(formattedSql);
         textArea.setEditable(true);
-        textArea.setLineWrap(true);
-        textArea.setWrapStyleWord(true);
+        textArea.setLineWrap(false);
         textArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
 
         panel.add(new JBScrollPane(textArea), BorderLayout.CENTER);
