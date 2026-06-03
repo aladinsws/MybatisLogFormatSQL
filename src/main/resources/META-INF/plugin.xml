@@ -8,7 +8,7 @@
         <p><b>MybatisLogFormatSQL</b> formats MyBatis log output into executable SQL.</p>
         <p>Select MyBatis log text in any editor, right-click, and choose
         <b>MybatisLogFormatSQL</b> to see the SQL with all <code>?</code>
-        placeholders replaced by their typed, SQL-safe literal values.</p>
+        placeholders replaced by their typed SQL-safe literal values.</p>
     ]]></description>
 
     <idea-version since-build="251" until-build="261.*"/>
