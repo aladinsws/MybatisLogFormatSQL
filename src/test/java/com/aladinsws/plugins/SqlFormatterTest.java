@@ -18,6 +18,15 @@ public class SqlFormatterTest {
         return SqlFormatter.format(sql);
     }
 
+    /** Returns the leading-whitespace count of the first line that starts with {@code prefix} (stripped). */
+    private static int indentOf(String result, String prefix) {
+        return result.lines()
+                .filter(l -> l.stripLeading().startsWith(prefix))
+                .mapToInt(l -> l.length() - l.stripLeading().length())
+                .findFirst()
+                .orElse(-1);
+    }
+
     // -----------------------------------------------------------------------
     // Edge cases: empty / blank input
     // -----------------------------------------------------------------------
@@ -442,6 +451,257 @@ public class SqlFormatterTest {
                 result.lines().anyMatch(l -> l.trim().startsWith("ELSE")));
         assertTrue("END on its own line",
                 result.lines().anyMatch(l -> l.trim().startsWith("END")));
+    }
+
+    // -----------------------------------------------------------------------
+    // JOIN ON with multiple AND / OR conditions
+    // -----------------------------------------------------------------------
+
+    @Test
+    public void testJoinOnSingleConditionNoWrapping() {
+        // Baseline: single ON condition — no AND/OR, so no extra line should appear
+        String result = fmt("SELECT * FROM a LEFT JOIN b ON a.id = b.id");
+        assertTrue("single-condition JOIN should stay on one line",
+                result.lines().anyMatch(l -> l.contains("LEFT JOIN b ON a.id = b.id")));
+    }
+
+    @Test
+    public void testJoinOnTwoAndConditionsEachOnNewLine() {
+        String sql = "SELECT * FROM user u LEFT JOIN address a ON u.adr_id = a.adr_id AND a.city = 'Tunis'";
+        String result = fmt(sql);
+
+        // AND must appear on its own line
+        assertTrue("AND must be on its own line",
+                result.lines().anyMatch(l -> l.stripLeading().startsWith("AND a.city")));
+
+        // AND must be indented deeper than the JOIN keyword itself
+        int andIndent  = indentOf(result, "AND a.city");
+        int joinIndent = indentOf(result, "LEFT JOIN");
+        assertTrue("AND should be indented deeper than LEFT JOIN", andIndent > joinIndent + 5);
+    }
+
+    @Test
+    public void testJoinOnAndAlignedWithFirstCondition() {
+        // Column of every AND in a JOIN ON must equal the column of the first condition
+        // (i.e., the position right after "ON ").
+        String sql = "SELECT * FROM a LEFT JOIN b ON a.id = b.id AND a.type = b.type AND a.status = 1";
+        String result = fmt(sql);
+
+        String joinLine = result.lines()
+                .filter(l -> l.contains("LEFT JOIN"))
+                .findFirst().orElseThrow();
+
+        // Compute where the first condition starts: right after " ON "
+        int firstConditionCol = joinLine.indexOf(" ON ") + " ON ".length();
+
+        result.lines()
+                .filter(l -> l.stripLeading().startsWith("AND"))
+                .forEach(l -> assertEquals(
+                        "AND line must be indented to column " + firstConditionCol,
+                        firstConditionCol, l.length() - l.stripLeading().length()));
+    }
+
+    @Test
+    public void testJoinOnThreeAndConditionsExactLayout() {
+        // "LEFT JOIN address a ON" = 22 chars  ➜  first condition at column 23
+        // Each subsequent AND must be indented to column 23 (= 39 spaces in the
+        // text block after stripping the 16-space common indent).
+        String sql = "SELECT u.name, u.phone FROM user u "
+                + "LEFT JOIN address a ON u.adr_id = a.adr_id AND a.city = 'Tunis' AND u.name = '%a'";
+        String expected = """
+                SELECT
+                  u.name,
+                  u.phone
+                FROM user u
+                LEFT JOIN address a ON u.adr_id = a.adr_id
+                                       AND a.city = 'Tunis'
+                                       AND u.name = '%a'""";
+        assertEquals(expected, fmt(sql));
+    }
+
+    @Test
+    public void testJoinOnOrConditionAligned() {
+        // OR inside a JOIN ON clause must also appear on its own line,
+        // aligned with the first condition.
+        String sql = "SELECT u.id FROM user u LEFT JOIN address a ON u.adr_id = a.id OR u.billing_id = a.id";
+        String result = fmt(sql);
+
+        assertTrue("OR in JOIN ON must be on its own line",
+                result.lines().anyMatch(l -> l.stripLeading().startsWith("OR u.billing_id")));
+
+        String joinLine = result.lines().filter(l -> l.contains("LEFT JOIN")).findFirst().orElseThrow();
+        int firstConditionCol = joinLine.indexOf(" ON ") + " ON ".length();
+        int orIndent = indentOf(result, "OR u.billing_id");
+        assertEquals("OR must align with first condition after ON", firstConditionCol, orIndent);
+    }
+
+    @Test
+    public void testJoinOnBetweenAndStaysInlineLogicalAndWraps() {
+        // The AND that belongs to BETWEEN … AND must stay on the JOIN line.
+        // Only the subsequent logical AND should move to a new line (aligned).
+        String sql = "SELECT * FROM t t1 "
+                + "INNER JOIN t t2 ON t1.age BETWEEN t2.min_age AND t2.max_age AND t1.type = 'A'";
+        String result = fmt(sql);
+
+        // BETWEEN … AND stays inline on the JOIN line
+        assertTrue("BETWEEN … AND must stay inline on JOIN line",
+                result.lines().anyMatch(l -> l.contains("BETWEEN t2.min_age AND t2.max_age")));
+
+        // The outer logical AND must be on its own line
+        assertTrue("Logical AND after BETWEEN must be on its own line",
+                result.lines().anyMatch(l -> l.stripLeading().startsWith("AND t1.type")));
+
+        // The outer AND must be deeper than INNER JOIN keyword
+        int andIndent  = indentOf(result, "AND t1.type");
+        int joinIndent = indentOf(result, "INNER JOIN");
+        assertTrue("AND must be indented deeper than INNER JOIN", andIndent > joinIndent + 5);
+    }
+
+    @Test
+    public void testMultipleJoinsEachWithMultipleAndConditions() {
+        // Two JOINs, each with multiple AND conditions, followed by a WHERE.
+        // JOIN ANDs must be column-aligned under their respective ON clause.
+        // WHERE ANDs must use the standard 2-space indent.
+        String sql = "SELECT u.name FROM user u "
+                + "INNER JOIN orders o ON u.id = o.user_id AND o.status = 'active' AND o.year = 2024 "
+                + "LEFT JOIN address a ON u.adr_id = a.adr_id AND a.country = 'TN' "
+                + "WHERE u.active = 1 AND u.age > 18";
+        String result = fmt(sql);
+
+        // INNER JOIN conditions on their own lines
+        assertTrue("INNER JOIN AND 1 on new line",
+                result.lines().anyMatch(l -> l.stripLeading().startsWith("AND o.status")));
+        assertTrue("INNER JOIN AND 2 on new line",
+                result.lines().anyMatch(l -> l.stripLeading().startsWith("AND o.year")));
+
+        // LEFT JOIN condition on its own line
+        assertTrue("LEFT JOIN AND on new line",
+                result.lines().anyMatch(l -> l.stripLeading().startsWith("AND a.country")));
+
+        // WHERE AND uses standard 2-space indent
+        assertEquals("WHERE AND must use 2-space indent", 2, indentOf(result, "AND u.age"));
+
+        // JOIN ANDs must be deeper than WHERE ANDs
+        int joinAndIndent = indentOf(result, "AND o.status");
+        assertTrue("JOIN AND must be deeper than WHERE AND", joinAndIndent > 2);
+    }
+
+    @Test
+    public void testJoinOnAndConditionsAndWhereAndHaveDifferentIndents() {
+        // JOIN ON AND is column-aligned (deep); WHERE AND is always 2-space.
+        String sql = "SELECT * FROM a "
+                + "LEFT JOIN b ON a.id = b.id AND a.type = 'x' "
+                + "WHERE a.active = 1 AND a.age > 0";
+        String result = fmt(sql);
+
+        int joinAndIndent  = indentOf(result, "AND a.type");
+        int whereAndIndent = indentOf(result, "AND a.age");
+
+        assertEquals("WHERE AND must be at 2-space indent", 2, whereAndIndent);
+        assertTrue("JOIN ON AND must be indented deeper than WHERE AND",
+                joinAndIndent > whereAndIndent);
+    }
+
+    @Test
+    public void testInnerJoinMultipleAndExactLayout() {
+        // "INNER JOIN orders o ON" = 22 chars  ➜  same first-condition column as LEFT JOIN above
+        String sql = "SELECT u.name FROM user u "
+                + "INNER JOIN orders o ON u.id = o.user_id AND o.status = 'active' AND o.year = 2024";
+        String expected = """
+                SELECT
+                  u.name
+                FROM user u
+                INNER JOIN orders o ON u.id = o.user_id
+                                       AND o.status = 'active'
+                                       AND o.year = 2024""";
+        assertEquals(expected, fmt(sql));
+    }
+
+    // -----------------------------------------------------------------------
+    // Long WHERE clause with multiple AND / OR conditions
+    // -----------------------------------------------------------------------
+
+    @Test
+    public void testWhereFourAndConditions() {
+        String sql = "SELECT u.name FROM user u "
+                + "WHERE u.active = 1 AND u.age > 18 AND u.city = 'Tunis' AND u.role = 'admin'";
+        String expected = """
+                SELECT
+                  u.name
+                FROM user u
+                WHERE u.active = 1
+                  AND u.age > 18
+                  AND u.city = 'Tunis'
+                  AND u.role = 'admin'""";
+        assertEquals(expected, fmt(sql));
+    }
+
+    @Test
+    public void testWhereAndOrMixed() {
+        String sql = "SELECT u.name FROM user u "
+                + "WHERE u.active = 1 AND u.age > 18 OR u.vip = 1 AND u.city = 'Tunis'";
+        String result = fmt(sql);
+
+        // Every logical operator must appear on its own line
+        assertTrue("AND u.age on new line", result.lines().anyMatch(l -> l.trim().equals("AND u.age > 18")));
+        assertTrue("OR u.vip on new line",  result.lines().anyMatch(l -> l.trim().equals("OR u.vip = 1")));
+        assertTrue("AND u.city on new line", result.lines().anyMatch(l -> l.trim().equals("AND u.city = 'Tunis'")));
+
+        // All three must share the same 2-space indent
+        assertEquals(2, indentOf(result, "AND u.age"));
+        assertEquals(2, indentOf(result, "OR u.vip"));
+        assertEquals(2, indentOf(result, "AND u.city"));
+    }
+
+    @Test
+    public void testWhereBetweenAndStaysInlineLogicalAndWraps() {
+        // BETWEEN … AND must remain on the same line as the WHERE condition;
+        // any surrounding logical ANDs must still be placed on their own lines.
+        String sql = "SELECT * FROM t WHERE age BETWEEN 18 AND 65 AND name = 'test'";
+        String expected = """
+                SELECT
+                  *
+                FROM t
+                WHERE age BETWEEN 18 AND 65
+                  AND name = 'test'""";
+        assertEquals(expected, fmt(sql));
+    }
+
+    @Test
+    public void testWhereMultipleOrConditions() {
+        String sql = "SELECT * FROM t WHERE status = 'A' OR status = 'B' OR status = 'C'";
+        String result = fmt(sql);
+
+        long orCount = result.lines()
+                .filter(l -> l.stripLeading().startsWith("OR status"))
+                .count();
+        assertEquals("Expected 2 OR lines", 2, orCount);
+
+        result.lines()
+                .filter(l -> l.stripLeading().startsWith("OR"))
+                .forEach(l -> assertEquals("OR must be at 2-space indent",
+                        2, l.length() - l.stripLeading().length()));
+    }
+
+    @Test
+    public void testWhereLongAndOrWithHaving() {
+        // AND/OR in WHERE, then HAVING — both must use 2-space indent,
+        // neither should be confused with JOIN alignment.
+        String sql = "SELECT dept, COUNT(*) FROM emp "
+                + "WHERE active = 1 AND age > 18 OR manager = 1 "
+                + "GROUP BY dept "
+                + "HAVING COUNT(*) > 5 AND COUNT(*) < 100";
+        String result = fmt(sql);
+
+        // WHERE conditions
+        assertEquals(2, indentOf(result, "AND age"));
+        assertEquals(2, indentOf(result, "OR manager"));
+        // HAVING conditions
+        assertEquals(2, indentOf(result, "AND COUNT(*)"));
+
+        // Clause keywords on their own lines
+        assertTrue(result.lines().anyMatch(l -> l.startsWith("GROUP BY")));
+        assertTrue(result.lines().anyMatch(l -> l.startsWith("HAVING")));
     }
 
 }
