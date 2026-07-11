@@ -655,8 +655,7 @@ public class SqlFormatterTest {
 
     @Test
     public void testWhereBetweenAndStaysInlineLogicalAndWraps() {
-        // BETWEEN … AND must remain on the same line as the WHERE condition;
-        // any surrounding logical ANDs must still be placed on their own lines.
+        // BETWEEN … AND must remain on the same line as the WHERE condition
         String sql = "SELECT * FROM t WHERE age BETWEEN 18 AND 65 AND name = 'test'";
         String expected = """
                 SELECT
@@ -686,7 +685,7 @@ public class SqlFormatterTest {
     @Test
     public void testWhereLongAndOrWithHaving() {
         // AND/OR in WHERE, then HAVING — both must use 2-space indent,
-        // neither should be confused with JOIN alignment.
+        // neither should be confused with JOIN alignment
         String sql = "SELECT dept, COUNT(*) FROM emp "
                 + "WHERE active = 1 AND age > 18 OR manager = 1 "
                 + "GROUP BY dept "
