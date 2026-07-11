@@ -25,7 +25,7 @@ public class MybatisLogDialog extends DialogWrapper {
         super(project);
         this.formattedSql = formattedSql;
         setTitle("MyBatis Log — Formatted SQL");
-        setOKButtonText("Copy && Close");
+        setOKButtonText("Copy & Close");
         setCancelButtonText("Close");
         init();
     }
