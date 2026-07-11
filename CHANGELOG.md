@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-11
+
+### Fixed
+
+- fix: improve SQL formatting for JOIN and WHERE conditions
+
 ## [0.2.0] - 2026-06-03
 
 ### Added
@@ -27,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Result displayed in a resizable, scrollable modal dialog ("MyBatis Log — Formatted SQL") with a **Copy & Close** button that copies the SQL to the system clipboard.
 - Compatible with IntelliJ-based IDEs build **251** through **261.\*** (2025.1 and above).
 
-[Unreleased]: https://github.com/aladinsws/MybatisLogFormatSQL/compare/0.2.0...HEAD
-[0.2.0]: https://github.com/aladinsws/MybatisLogFormatSQL/compare/0.1.0...0.2.0
-[0.1.0]: https://github.com/aladinsws/MybatisLogFormatSQL/commits/0.1.0
+[Unreleased]: https://github.com/aladinsws/MybatisLogFormatSQL/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/aladinsws/MybatisLogFormatSQL/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/aladinsws/MybatisLogFormatSQL/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/aladinsws/MybatisLogFormatSQL/commits/v0.1.0
