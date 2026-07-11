@@ -5,10 +5,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Deque;
-import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -21,7 +18,7 @@ public final class SqlFormatter {
     /**
      * Clause keywords that force a new line (at SQL level, not inside function calls).
      */
-    private static final Set<String> CLAUSE_STARTERS = new LinkedHashSet<>(List.of(
+    private static final Set<String> CLAUSE_STARTERS = Set.of(
             "WITH", "SELECT", "FROM",
             "FULL OUTER JOIN", "LEFT OUTER JOIN", "RIGHT OUTER JOIN",
             "INNER JOIN", "CROSS JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN", "JOIN",
@@ -29,7 +26,7 @@ public final class SqlFormatter {
             "LIMIT", "OFFSET",
             "UNION ALL", "UNION", "INTERSECT ALL", "INTERSECT", "EXCEPT ALL", "EXCEPT",
             "SET"
-    ));
+    );
 
     /**
      * Only these keywords before "(" open a SQL block (subquery / CTE body).
@@ -37,6 +34,17 @@ public final class SqlFormatter {
      * clauses, WHERE grouping, etc.) is treated as an inline paren.
      */
     private static final Set<String> BLOCK_OPENING_KEYWORDS = Set.of("AS", "FROM", "EXISTS");
+
+    /**
+     * JOIN clause keywords — when ON follows one of these the AND/OR conditions
+     * should be aligned under the first condition rather than at the generic indent.
+     */
+    private static final Set<String> JOIN_KEYWORDS = Set.of(
+            "JOIN", "INNER JOIN",
+            "LEFT JOIN", "RIGHT JOIN", "FULL JOIN",
+            "LEFT OUTER JOIN", "RIGHT OUTER JOIN", "FULL OUTER JOIN",
+            "CROSS JOIN"
+    );
 
     /**
      * Inline-paren keywords that should still have a space before "(" for
@@ -49,14 +57,14 @@ public final class SqlFormatter {
     /**
      * All single-word SQL keywords (used to distinguish keywords from identifiers).
      */
-    private static final Set<String> KEYWORDS = new HashSet<>(Arrays.asList(
+    private static final Set<String> KEYWORDS = Set.of(
             "SELECT", "FROM", "WHERE", "JOIN", "ON", "AND", "OR", "NOT",
             "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "CROSS",
             "GROUP", "ORDER", "HAVING", "LIMIT", "OFFSET", "BY",
             "UNION", "INTERSECT", "EXCEPT", "ALL", "DISTINCT", "TOP",
             "WITH", "AS", "SET",
             "CASE", "WHEN", "THEN", "ELSE", "END",
-            "IN", "IS", "NULL", "BETWEEN", "LIKE", "EXISTS", "NOT",
+            "IN", "IS", "NULL", "BETWEEN", "LIKE", "EXISTS",
             "OVER", "PARTITION", "ROWS", "RANGE", "PRECEDING", "FOLLOWING",
             "CURRENT", "ROW", "UNBOUNDED",
             "INSERT", "INTO", "VALUES", "UPDATE", "DELETE",
@@ -66,7 +74,7 @@ public final class SqlFormatter {
             "FIRST", "LAST", "INTERVAL", "EXTRACT", "CAST", "COALESCE",
             "NULLIF", "GREATEST", "LEAST", "FILTER", "WITHIN", "LATERAL",
             "TRUE", "FALSE", "UNKNOWN", "DEFAULT", "USING"
-    ));
+    );
 
     /**
      * Multi-word keywords to merge (longest first).
@@ -200,17 +208,21 @@ public final class SqlFormatter {
     // ── Block context ─────────────────────────────────────────────────────────
 
     /**
-     * Tracks state for each SQL block (top-level query or CTE/subquery body).
+     * Tracks state for each SQL block (top-level query or CTE body).
      */
     private static class BlockCtx {
-        final int indent;   // indentation of clause keywords in this block
-        String clause;      // last clause keyword seen (SELECT, FROM, WHERE, …)
-        int inlineDepth;    // depth of INLINE parens nested inside this block
+        final int indent;       // indentation of clause keywords in this block
+        String clause;          // last clause keyword seen (SELECT, FROM, WHERE, …)
+        int inlineDepth;        // depth of INLINE parens nested inside this block
+        boolean betweenPending; // true after BETWEEN — the next AND belongs to BETWEEN … AND, not a logical AND
+        int joinOnConditionIndent; // >=0 when inside a JOIN's ON clause: column where first condition starts
 
         BlockCtx(int indent) {
             this.indent = indent;
             this.clause = null;
             this.inlineDepth = 0;
+            this.betweenPending = false;
+            this.joinOnConditionIndent = -1;
         }
 
         boolean atSqlLevel() {
@@ -289,6 +301,7 @@ public final class SqlFormatter {
                                               Deque<Integer> caseWhenIndentStack,
                                               boolean[] needSpace) {
         if (CLAUSE_STARTERS.contains(upper)) {
+            cur.betweenPending = false;
             handleClauseKeyword(sb, cur, upper);
             needSpace[0] = !upper.equals("SELECT");
         } else if (upper.equals("CASE")) {
@@ -301,6 +314,19 @@ public final class SqlFormatter {
             handleThenKeyword(sb, upper, caseWhenIndentStack, needSpace);
         } else if (upper.equals("END")) {
             handleEndKeyword(sb, upper, caseWhenIndentStack, needSpace);
+        } else if (upper.equals("AND") || upper.equals("OR")) {
+            handleAndOrKeyword(sb, upper, cur, needSpace);
+        } else if (upper.equals("BETWEEN") || upper.equals("NOT BETWEEN")) {
+            cur.betweenPending = true;
+            emit(sb, upper, needSpace[0]);
+            needSpace[0] = true;
+        } else if (upper.equals("ON") && JOIN_KEYWORDS.contains(cur.clause)) {
+            // ON after a JOIN: emit it then record where the first condition starts
+            // so subsequent AND/OR can be aligned to that column.
+            emit(sb, "ON", needSpace[0]);
+            // +1 for the space that will precede the next token
+            cur.joinOnConditionIndent = getCurrentLineLength(sb) + 1;
+            needSpace[0] = true;
         } else {
             emit(sb, upper, needSpace[0]);
             needSpace[0] = true;
@@ -344,6 +370,35 @@ public final class SqlFormatter {
             }
         } else {
             emit(sb, upper, needSpace[0]);
+        }
+        needSpace[0] = true;
+    }
+
+    /**
+     * Emits AND / OR on a new indented line so each WHERE/HAVING/ON condition
+     * is easy to read at a glance.
+     *
+     * <ul>
+     *   <li>The AND that belongs to {@code BETWEEN x AND y} stays inline.</li>
+     *   <li>Inside a JOIN's ON clause, AND/OR are aligned to the column where
+     *       the first condition started (right after {@code ON }).</li>
+     *   <li>Everywhere else, the standard {@code cur.indent + INDENT} is used.</li>
+     * </ul>
+     */
+    private static void handleAndOrKeyword(StringBuilder sb, String upper, BlockCtx cur,
+                                           boolean[] needSpace) {
+        if (cur.betweenPending && upper.equals("AND")) {
+            // This AND closes a BETWEEN expression — keep it inline
+            cur.betweenPending = false;
+            emit(sb, upper, needSpace[0]);
+        } else if (cur.joinOnConditionIndent >= 0) {
+            // Inside a JOIN ON clause — align with the first condition
+            emitNewlineIndent(sb, cur.joinOnConditionIndent);
+            sb.append(upper);
+        } else {
+            // Logical AND / OR — put it on its own indented line
+            emitNewlineIndent(sb, cur.indent + INDENT);
+            sb.append(upper);
         }
         needSpace[0] = true;
     }
@@ -457,6 +512,7 @@ public final class SqlFormatter {
             emitNewlineIndent(sb, cur.indent);
         }
         cur.clause = upper;
+        cur.joinOnConditionIndent = -1; // reset whenever a new clause starts
         sb.append(upper);
         if (upper.equals("SELECT")) {
             // Column list follows — each on its own line
@@ -465,11 +521,22 @@ public final class SqlFormatter {
     }
 
     /**
+     * Returns the number of characters on the current (last) line of {@code sb},
+     * i.e. characters since the most-recent {@code '\n'} (or from the start if
+     * there is no newline yet).  Used to compute column-aligned indentation for
+     * JOIN ON conditions.
+     */
+    private static int getCurrentLineLength(StringBuilder sb) {
+        int lastNewline = sb.lastIndexOf("\n");
+        return lastNewline < 0 ? sb.length() : sb.length() - lastNewline - 1;
+    }
+
+    /**
      * Appends a newline followed by {@code indent} spaces.
      */
     private static void emitNewlineIndent(StringBuilder sb, int indent) {
         sb.append('\n');
-        sb.append(" ".repeat(Math.max(0, indent)));
+        sb.repeat(" ", Math.max(0, indent));
     }
 
     /**
