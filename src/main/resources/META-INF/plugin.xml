@@ -11,7 +11,7 @@
         placeholders replaced by their typed SQL-safe literal values.</p>
     ]]></description>
 
-    <idea-version since-build="251" until-build="261.*"/>
+    <idea-version since-build="251"/>
 
     <depends>com.intellij.modules.idea</depends>
 
